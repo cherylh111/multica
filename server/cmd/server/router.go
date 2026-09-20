@@ -1610,6 +1610,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					// Provider presets — member-visible so the Runtime page can
+					// show which supplier a runtime is pointed at. Responses
+					// carry masked secrets only; create/edit/delete are
+					// admin-gated below.
+					r.Get("/provider-presets", h.ListProviderPresets)
+					r.Get("/provider-presets/{presetId}", h.GetProviderPreset)
 					// The workspace MCP library — member-visible so an agent
 					// owner can see what is available to add to their agent.
 					// The payload is names and transports only; the stored
@@ -1649,6 +1655,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
+					// Provider presets hold workspace-wide supplier
+					// credentials, so curating them is an admin action.
+					r.Post("/provider-presets", h.CreateProviderPreset)
+					r.Patch("/provider-presets/{presetId}", h.UpdateProviderPreset)
+					r.Put("/provider-presets/{presetId}", h.UpdateProviderPreset)
+					r.Delete("/provider-presets/{presetId}", h.DeleteProviderPreset)
 					// Publishing. The author uploads an artifact bundle and we
 					// store it; a version is immutable once published, so
 					// there is no update route here by design.

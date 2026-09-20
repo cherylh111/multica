@@ -97,6 +97,8 @@ type AgentRuntime struct {
 	Visibility     string             `json:"visibility"`
 	ProfileID      pgtype.UUID        `json:"profile_id"`
 	CustomName     pgtype.Text        `json:"custom_name"`
+	// Provider preset currently in force for this runtime (NULL = none). Its env/model override each agent's own values at task launch.
+	ActiveProviderPresetID pgtype.UUID `json:"active_provider_preset_id"`
 }
 
 type AgentSkill struct {
@@ -1220,6 +1222,25 @@ type ProjectResource struct {
 	Position     int32              `json:"position"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	CreatedBy    pgtype.UUID        `json:"created_by"`
+}
+
+type ProviderPreset struct {
+	ID             pgtype.UUID `json:"id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	Name           string      `json:"name"`
+	RuntimeType    string      `json:"runtime_type"`
+	ProtocolFamily string      `json:"protocol_family"`
+	// Environment injected into the agent process at launch. SECRET: masked on every read; a PATCH that echoes the mask keeps the persisted value.
+	Env           []byte `json:"env"`
+	Model         string `json:"model"`
+	ThinkingLevel string `json:"thinking_level"`
+	// Family-native config fragment. String leaves under secret-looking keys are masked on read, same sentinel as env.
+	NativeConfig []byte             `json:"native_config"`
+	Visibility   string             `json:"visibility"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
+	Enabled      bool               `json:"enabled"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type QuickAction struct {

@@ -773,6 +773,19 @@ type TaskAgentData struct {
 	// (issue #3260). Other providers ignore the payload entirely. Sent
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+	// ProviderPreset* carry the runtime's active provider preset (null preset
+	// = all four empty). They travel SEPARATELY from the agent's own fields
+	// rather than pre-merged, because the daemon applies them as overrides:
+	// preset env wins over CustomEnv and preset model wins over Model. Keeping
+	// them distinct is also what lets the daemon log which values came from a
+	// preset, so "why is my agent on the relay" is answerable from a task log.
+	// Secrets ride here in the clear — this is a daemon-authenticated payload
+	// the daemon injects into the child process, and it is never echoed into a
+	// task record, an issue comment, or a browser response.
+	ProviderPresetEnv           map[string]string `json:"provider_preset_env,omitempty"`
+	ProviderPresetModel         string            `json:"provider_preset_model,omitempty"`
+	ProviderPresetThinkingLevel string            `json:"provider_preset_thinking_level,omitempty"`
+	ProviderPresetNativeConfig  json.RawMessage   `json:"provider_preset_native_config,omitempty"`
 }
 
 // visibleTaskHistory omits unused assignee fallbacks created by older versions.

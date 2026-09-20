@@ -8511,6 +8511,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	// Provider preset second, so it WINS on collisions — that is the whole
+	// point of a preset: it is the runtime-level answer to "which supplier",
+	// and an agent that also sets ANTHROPIC_BASE_URL must lose to it or the
+	// switch would silently not switch. Same blocklist: a preset is
+	// user-authored config and must not be able to repoint the daemon's own
+	// managed paths (CODEX_HOME, OPENCLAW_CONFIG_PATH, …) out from under the
+	// task.
+	layerProviderPresetEnv(agentEnv, task.Agent, d.logger)
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -8583,6 +8591,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil && task.Agent.Model != "" {
 		model = task.Agent.Model
 	}
+	// Provider preset wins over the agent's own model: a preset is the
+	// runtime-level answer to "which supplier", and the model id is part of
+	// that answer — a relay serves a different model namespace than the
+	// official endpoint.
+	if task.Agent != nil && task.Agent.ProviderPresetModel != "" {
+		model = task.Agent.ProviderPresetModel
+	}
 	if model == "" {
 		model = entry.Model
 	}
@@ -8621,6 +8636,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil {
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
+		// Same override order as the model. Empty preset thinking_level means
+		// "inherit", which is what hermes needs — it has no reasoning control
+		// and rejects any value — so only a non-empty preset value applies.
+		if task.Agent.ProviderPresetThinkingLevel != "" {
+			thinkingLevel = task.Agent.ProviderPresetThinkingLevel
+		}
 	}
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
@@ -10439,6 +10460,28 @@ func annotateCodexRetiredCompaction(errMsg, provider string) string {
 		return errMsg
 	}
 	return errMsg + codexRetiredCompactionHint
+}
+
+// layerProviderPresetEnv applies the runtime's active provider preset on top of
+// the child env. It runs AFTER the agent's own custom_env so the preset wins,
+// and is the only layer that may override a key the agent also set.
+//
+// task.Agent may be nil on paths that build an environment without an agent
+// payload; that is a no-op rather than an error, matching how agentCustomEnv is
+// read above.
+func layerProviderPresetEnv(agentEnv map[string]string, taskAgent *AgentData, logger *slog.Logger) {
+	if taskAgent == nil {
+		return
+	}
+	for k, v := range taskAgent.ProviderPresetEnv {
+		if isBlockedEnvKey(k) {
+			if logger != nil {
+				logger.Warn("provider preset env: blocked key skipped", "key", k)
+			}
+			continue
+		}
+		agentEnv[k] = v
+	}
 }
 
 func layerCustomEnvAndHermesHome(agentEnv, customEnv map[string]string, overlayHome string, logger *slog.Logger) {
