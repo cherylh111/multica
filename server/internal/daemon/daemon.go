@@ -8084,6 +8084,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
+			// Decoded once here; execenv hands it to whichever family writes
+			// a config file. Reuse needs it as much as a fresh prepare does —
+			// a resumed turn must keep running against the same supplier.
+			ProviderPresetNativeConfig: decodeProviderPresetNativeConfig(task.Agent, d.logger),
 		})
 		if err != nil {
 			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("reuse execution environment: %w", err))
@@ -8134,6 +8138,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
+			// Decoded once here; execenv hands it to whichever family writes
+			// a config file. A fragment that will not decode drops the native
+			// half with a warning — the same degrade-don't-fail rule the env
+			// half follows, so a malformed fragment can never take a runtime
+			// offline.
+			ProviderPresetNativeConfig: decodeProviderPresetNativeConfig(task.Agent, d.logger),
 		}
 		if localAssignment.UsesWorktree() {
 			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{LocalPath: localAssignment.AbsPath}
@@ -10469,6 +10479,29 @@ func annotateCodexRetiredCompaction(errMsg, provider string) string {
 // task.Agent may be nil on paths that build an environment without an agent
 // payload; that is a no-op rather than an error, matching how agentCustomEnv is
 // read above.
+// decodeProviderPresetNativeConfig decodes the runtime's active provider preset's
+// family-native fragment for the execenv layer. It returns nil when no preset is
+// in force, when the preset carries only env, or when the payload will not
+// decode — the last case logged, not fatal: the native half of a preset is an
+// override, and a run that skips it still runs on the agent's own configuration
+// rather than not running at all.
+func decodeProviderPresetNativeConfig(taskAgent *AgentData, logger *slog.Logger) map[string]any {
+	if taskAgent == nil || len(taskAgent.ProviderPresetNativeConfig) == 0 {
+		return nil
+	}
+	var fragment map[string]any
+	if err := json.Unmarshal(taskAgent.ProviderPresetNativeConfig, &fragment); err != nil {
+		if logger != nil {
+			logger.Warn("provider preset: native_config is not a JSON object; applying the preset's env only", "error", err)
+		}
+		return nil
+	}
+	if len(fragment) == 0 {
+		return nil
+	}
+	return fragment
+}
+
 func layerProviderPresetEnv(agentEnv map[string]string, taskAgent *AgentData, logger *slog.Logger) {
 	if taskAgent == nil {
 		return

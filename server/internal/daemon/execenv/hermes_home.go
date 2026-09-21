@@ -379,7 +379,7 @@ func hermesProfileDir(root, name string) (home string, mustExist bool, err error
 // database task-local. The returned hermesSessionMount reports both what got
 // mounted and whether the store actually holds a transcript, so the caller never
 // tells a task it can resume history that is not there.
-func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, logger *slog.Logger) (sessions hermesSessionMount, err error) {
+func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, workspaceSkills []SkillContextForEnv, env map[string]string, memoryStore, sessionStore string, presetFragment map[string]any, logger *slog.Logger) (sessions hermesSessionMount, err error) {
 	sharedHome := strings.TrimSpace(sourceHome)
 	if sharedHome == "" {
 		sharedHome = platformDefaultHermesHome()
@@ -426,7 +426,7 @@ func prepareHermesHome(hermesHome, sourceHome string, sourceMustExist bool, work
 	if err := mirrorSharedHermesHome(sharedHome, hermesHome, logger); err != nil {
 		return hermesSessionMount{}, fmt.Errorf("mirror shared hermes home: %w", err)
 	}
-	if err := writeDerivedHermesConfig(sharedHome, hermesHome, env, logger); err != nil {
+	if err := writeDerivedHermesConfig(sharedHome, hermesHome, env, presetFragment, logger); err != nil {
 		return hermesSessionMount{}, fmt.Errorf("derive hermes config: %w", err)
 	}
 	if err := writeDerivedHermesEnv(sharedHome, hermesHome); err != nil {
@@ -638,7 +638,7 @@ func linkSharedHermesEntry(src, dst string) error {
 // the point of the fix; only the user's global skills would be missing. The file
 // is written 0600 (it can hold inline api_key secrets) via atomic replace, so
 // reuse also repairs a prior file's permissions.
-func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]string, logger *slog.Logger) error {
+func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]string, presetFragment map[string]any, logger *slog.Logger) error {
 	srcConfig := filepath.Join(sharedHome, "config.yaml")
 	dstConfig := filepath.Join(hermesHome, "config.yaml")
 
@@ -668,6 +668,7 @@ func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]stri
 		if err := setHermesExternalDirs(doc, computeHermesExternalDirs(sharedHome, nil, env)); err != nil {
 			return err
 		}
+		applyHermesProviderPreset(doc, presetFragment, logger)
 		return marshalYAMLToFile(doc, dstConfig)
 	}
 
@@ -685,7 +686,25 @@ func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]stri
 	// Supermemory/Hindsight/etc. bank isn't shared across managed tasks; the
 	// built-in per-task memories/ dir is already isolated above.
 	disableHermesMemoryProvider(&doc)
+	applyHermesProviderPreset(&doc, presetFragment, logger)
 	return marshalYAMLToFile(&doc, dstConfig)
+}
+
+// applyHermesProviderPreset merges the runtime's active provider preset
+// fragment into the overlay's derived config.yaml, last, so it wins over the
+// mirrored user config and over the daemon's own external_dirs / memory
+// settings — the same "preset beats everything else" order the env half uses.
+//
+// A fragment that cannot be merged is dropped with a warning rather than
+// failing the overlay: the task still runs on the mirrored config, which is
+// exactly what it would have run on without a preset at all.
+func applyHermesProviderPreset(doc *yaml.Node, presetFragment map[string]any, logger *slog.Logger) {
+	if len(presetFragment) == 0 {
+		return
+	}
+	if err := mergeYAMLFragment(doc, presetFragment); err != nil && logger != nil {
+		logger.Warn("execenv: hermes provider preset fragment could not be merged; running without it", "error", err)
+	}
 }
 
 // disableHermesMemoryProvider forces skills-adjacent `memory.provider` to empty
