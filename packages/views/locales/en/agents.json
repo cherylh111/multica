@@ -982,5 +982,12 @@
     "selected_one": "{{count}} selected",
     "selected_other": "{{count}} selected",
     "clear_selection": "Clear selection"
+  },
+  "preset_override": {
+    "applied": "This runtime is using the preset “{{name}}”.",
+    "env": "{{count}} of this agent's environment variables are overridden by the runtime preset “{{name}}”; the preset wins at launch.",
+    "hint": "Presets belong to the runtime, so every agent on it is affected. The agent's own settings are kept, not deleted — clear the preset to make them take effect again.",
+    "model": "This agent's model is overridden by the runtime preset “{{name}}”.",
+    "thinking_level": "This agent's thinking level is overridden by the runtime preset “{{name}}”."
   }
 }

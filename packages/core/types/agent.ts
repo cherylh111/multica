@@ -695,6 +695,37 @@ export interface Agent {
   updated_at: string;
   archived_at: string | null;
   archived_by: string | null;
+  /**
+   * Set when this agent's runtime has a provider preset in force that
+   * overrides part of the agent's own configuration. Omitted entirely when
+   * no preset applies — treat `undefined` as "nothing is overriding you".
+   *
+   * The agent's env / model are still stored and still editable; a preset
+   * does not rewrite them. But at launch the preset wins, so the settings
+   * page must say so rather than showing configuration that is not in
+   * force.
+   *
+   * Overridden env keys are COUNTED, never named: they are the agent's own
+   * secret names, and this object is readable by anyone who can read the
+   * agent.
+   */
+  runtime_preset_override?: AgentRuntimePresetOverride;
+}
+
+/**
+ * Which parts of an agent's own configuration a runtime-level provider
+ * preset is currently replacing.
+ */
+export interface AgentRuntimePresetOverride {
+  preset_id: string;
+  preset_name: string;
+  runtime_id: string;
+  /** How many of the agent's own custom_env keys the preset also sets. */
+  overridden_env_key_count: number;
+  /** True when the preset carries a model AND the agent set one. */
+  model_overridden: boolean;
+  /** True when the preset carries a thinking level AND the agent set one. */
+  thinking_level_overridden: boolean;
 }
 
 export interface AgentConversationStarter {

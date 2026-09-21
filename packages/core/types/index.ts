@@ -41,6 +41,7 @@ export type {
   CreateProviderPresetRequest,
   UpdateProviderPresetRequest,
   ApplyProviderPresetRequest,
+  AgentRuntimePresetOverride,
   CreateAgentRequest,
   AgentBuilderRuntimeSwitch,
   AgentBuilderSession,

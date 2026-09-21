@@ -82,3 +82,16 @@ RETURNING id;
 SELECT p.* FROM provider_preset p
 JOIN agent_runtime ar ON ar.active_provider_preset_id = p.id
 WHERE ar.id = @runtime_id AND p.enabled = true;
+
+-- name: ListActiveProviderPresetsForRuntimes :many
+-- Batch sibling of GetActiveProviderPresetForRuntime, for the agent list: one
+-- round trip for every runtime in the response instead of one per agent. Only
+-- the columns the override disclosure needs are selected — never the preset's
+-- identity beyond its name.
+--
+-- Disabled presets are treated as not applied, matching the single-runtime
+-- query: flipping enabled=false must stop the override everywhere at once.
+SELECT ar.id AS runtime_id, p.id, p.name, p.env, p.model, p.thinking_level
+FROM provider_preset p
+JOIN agent_runtime ar ON ar.active_provider_preset_id = p.id
+WHERE ar.id = ANY(@runtime_ids::uuid[]) AND p.enabled = true;

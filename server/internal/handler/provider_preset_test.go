@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // ---------------------------------------------------------------------------
@@ -244,5 +246,56 @@ func TestResolvePresetRuntimeType(t *testing.T) {
 	}
 	if rt != "claude" || family != "claude" {
 		t.Fatalf("unexpected resolution: %q / %q", rt, family)
+	}
+}
+
+func TestRuntimePresetOverrideFor(t *testing.T) {
+	preset := presetOverride{
+		ID:            "preset-1",
+		Name:          "Relay",
+		Env:           []byte(`{"ANTHROPIC_API_KEY":"***","UNRELATED":"v"}`),
+		Model:         "relay-model",
+		ThinkingLevel: "",
+	}
+
+	agent := func(envJSON string, model, thinking string) db.Agent {
+		row := db.Agent{Model: strToText(model), ThinkingLevel: strToText(thinking)}
+		if envJSON != "" {
+			row.CustomEnv = []byte(envJSON)
+		}
+		return row
+	}
+
+	// Only the keys the preset actually sets are counted; the agent's other
+	// keys are still theirs and must not inflate the number.
+	got := runtimePresetOverrideFor(
+		agent(`{"ANTHROPIC_API_KEY":"sk","OTHER_KEY":"v"}`, "claude-opus-4-8", "high"),
+		"runtime-1", preset,
+	)
+	if got.PresetName != "Relay" || got.RuntimeID != "runtime-1" {
+		t.Fatalf("unexpected identity: %+v", got)
+	}
+	if got.OverriddenEnvKeyCount != 1 {
+		t.Fatalf("OverriddenEnvKeyCount = %d, want 1", got.OverriddenEnvKeyCount)
+	}
+	if !got.ModelOverridden {
+		t.Fatal("model should be reported as overridden")
+	}
+	// An empty preset thinking_level means "inherit": it replaces nothing, so
+	// counting it would warn the user about a change that is not happening.
+	if got.ThinkingLevelOverridden {
+		t.Fatal("an empty preset field must not be counted as an override")
+	}
+
+	// The agent set nothing the preset could displace: naming an override here
+	// would be the disclosure lying in the other direction.
+	if got := runtimePresetOverrideFor(agent(`{}`, "", ""), "runtime-1", preset); got.OverriddenEnvKeyCount != 0 || got.ModelOverridden {
+		t.Fatalf("unexpected overrides against an empty agent: %+v", got)
+	}
+
+	// A corrupt env payload degrades to "nothing overridden" rather than
+	// failing the response it is attached to.
+	if got := runtimePresetOverrideFor(agent(`not json`, "m", "t"), "runtime-1", preset); got.OverriddenEnvKeyCount != 0 {
+		t.Fatalf("corrupt agent env must count as no override, got %d", got.OverriddenEnvKeyCount)
 	}
 }

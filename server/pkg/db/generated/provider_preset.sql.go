@@ -197,6 +197,56 @@ func (q *Queries) GetProviderPresetForWorkspace(ctx context.Context, arg GetProv
 	return i, err
 }
 
+const listActiveProviderPresetsForRuntimes = `-- name: ListActiveProviderPresetsForRuntimes :many
+SELECT ar.id AS runtime_id, p.id, p.name, p.env, p.model, p.thinking_level
+FROM provider_preset p
+JOIN agent_runtime ar ON ar.active_provider_preset_id = p.id
+WHERE ar.id = ANY($1::uuid[]) AND p.enabled = true
+`
+
+type ListActiveProviderPresetsForRuntimesRow struct {
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	ID            pgtype.UUID `json:"id"`
+	Name          string      `json:"name"`
+	Env           []byte      `json:"env"`
+	Model         string      `json:"model"`
+	ThinkingLevel string      `json:"thinking_level"`
+}
+
+// Batch sibling of GetActiveProviderPresetForRuntime, for the agent list: one
+// round trip for every runtime in the response instead of one per agent. Only
+// the columns the override disclosure needs are selected — never the preset's
+// identity beyond its name.
+//
+// Disabled presets are treated as not applied, matching the single-runtime
+// query: flipping enabled=false must stop the override everywhere at once.
+func (q *Queries) ListActiveProviderPresetsForRuntimes(ctx context.Context, runtimeIds []pgtype.UUID) ([]ListActiveProviderPresetsForRuntimesRow, error) {
+	rows, err := q.db.Query(ctx, listActiveProviderPresetsForRuntimes, runtimeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveProviderPresetsForRuntimesRow{}
+	for rows.Next() {
+		var i ListActiveProviderPresetsForRuntimesRow
+		if err := rows.Scan(
+			&i.RuntimeID,
+			&i.ID,
+			&i.Name,
+			&i.Env,
+			&i.Model,
+			&i.ThinkingLevel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProviderPresets = `-- name: ListProviderPresets :many
 SELECT id, workspace_id, name, runtime_type, protocol_family, env, model, thinking_level, native_config, visibility, created_by, enabled, created_at, updated_at FROM provider_preset
 WHERE workspace_id = $1

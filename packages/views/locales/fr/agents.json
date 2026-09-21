@@ -982,5 +982,12 @@
     "selected_one": "{{count}} sélectionné",
     "selected_other": "{{count}} sélectionnés",
     "clear_selection": "Effacer la sélection"
+  },
+  "preset_override": {
+    "applied": "Ce runtime utilise le préréglage « {{name}} ».",
+    "env": "{{count}} variables d'environnement de cet agent sont remplacées par le préréglage « {{name}} » ; le préréglage prévaut au lancement.",
+    "hint": "Les préréglages appartiennent au runtime : tous ses agents sont concernés. La configuration propre de l'agent est conservée, pas supprimée — retirez le préréglage pour qu'elle reprenne effet.",
+    "model": "Le modèle de cet agent est remplacé par le préréglage « {{name}} ».",
+    "thinking_level": "Le niveau de réflexion de cet agent est remplacé par le préréglage « {{name}} »."
   }
 }

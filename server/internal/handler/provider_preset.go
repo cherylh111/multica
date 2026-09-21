@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -695,4 +696,131 @@ func presetAppliesToRuntime(presetRuntimeType, runtimeProvider string) bool {
 	presetFamily, presetOK := agent.RuntimeProtocolFamily(presetRuntimeType)
 	runtimeFamily, runtimeOK := agent.RuntimeProtocolFamily(runtimeProvider)
 	return presetOK && runtimeOK && presetFamily == runtimeFamily
+}
+
+// presetOverride is the minimal shape the override disclosure needs from a
+// preset: name plus the three fields that can displace an agent's own values.
+// Kept separate from db.ProviderPreset so the batch query — which selects only
+// these columns — and the single-runtime query share one computation.
+type presetOverride struct {
+	ID            string
+	Name          string
+	Env           []byte
+	Model         string
+	ThinkingLevel string
+}
+
+// runtimePresetOverrideFor computes the disclosure from an agent row and the
+// preset its runtime has in force. It is pure: no query, no error path. Both
+// the detail response and the list response go through it so the two can never
+// disagree about what "overridden" means.
+func runtimePresetOverrideFor(agentRow db.Agent, runtimeID string, preset presetOverride) *RuntimePresetOverride {
+	var customEnv map[string]string
+	if len(agentRow.CustomEnv) > 0 {
+		_ = json.Unmarshal(agentRow.CustomEnv, &customEnv)
+	}
+	presetEnv := decodePresetEnv(preset.Env)
+
+	// Counted, never named: these are the agent's own secret names, and the
+	// disclosure is readable by anyone who can read the agent.
+	overridden := 0
+	for key := range customEnv {
+		if _, ok := presetEnv[key]; ok {
+			overridden++
+		}
+	}
+
+	return &RuntimePresetOverride{
+		PresetID:   preset.ID,
+		PresetName: preset.Name,
+		RuntimeID:  runtimeID,
+		// An empty preset field means "inherit", so it overrides nothing and
+		// must not be counted. The agent must also have set one: replacing
+		// "unset" with the preset's value is the preset doing its job, not
+		// overriding the agent.
+		OverriddenEnvKeyCount:   overridden,
+		ModelOverridden:         preset.Model != "" && agentRow.Model.String != "",
+		ThinkingLevelOverridden: preset.ThinkingLevel != "" && agentRow.ThinkingLevel.String != "",
+	}
+}
+
+// attachRuntimePresetOverride fills in the disclosure that a runtime-level
+// preset is overriding part of this agent's own configuration.
+//
+// The agent's custom_env / model are still editable and still stored — a
+// preset does not rewrite them — but at launch the preset wins, so without
+// this the agent's settings page would show configuration that is not in
+// force. Nothing here fails the request: a read that errors leaves the
+// summary off rather than turning an agent detail page into a 500.
+func (h *Handler) attachRuntimePresetOverride(ctx context.Context, resp *AgentResponse, agentRow db.Agent) {
+	if !agentRow.RuntimeID.Valid {
+		return
+	}
+	preset, err := h.Queries.GetActiveProviderPresetForRuntime(ctx, agentRow.RuntimeID)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Debug("provider preset override: no active preset for runtime",
+				"runtime_id", uuidToString(agentRow.RuntimeID), "error", err)
+		}
+		return
+	}
+	resp.RuntimePresetOverride = runtimePresetOverrideFor(agentRow, uuidToString(agentRow.RuntimeID), presetOverride{
+		ID:            uuidToString(preset.ID),
+		Name:          preset.Name,
+		Env:           preset.Env,
+		Model:         preset.Model,
+		ThinkingLevel: preset.ThinkingLevel,
+	})
+}
+
+// attachRuntimePresetOverrides is the list-shaped sibling: one batch read for
+// every runtime the response touches, then the same per-agent computation.
+// Doing this per row would be the classic N+1 on the busiest read in the app.
+func (h *Handler) attachRuntimePresetOverrides(ctx context.Context, resps []AgentResponse, agentRows []db.Agent) {
+	runtimeIDs := make([]pgtype.UUID, 0, len(agentRows))
+	seen := make(map[string]struct{}, len(agentRows))
+	for _, a := range agentRows {
+		if !a.RuntimeID.Valid {
+			continue
+		}
+		id := uuidToString(a.RuntimeID)
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		runtimeIDs = append(runtimeIDs, a.RuntimeID)
+	}
+	if len(runtimeIDs) == 0 {
+		return
+	}
+	presets, err := h.Queries.ListActiveProviderPresetsForRuntimes(ctx, runtimeIDs)
+	if err != nil {
+		slog.Debug("provider preset override: batch read failed; list renders without the disclosure", "error", err)
+		return
+	}
+	byRuntime := make(map[string]presetOverride, len(presets))
+	for _, p := range presets {
+		byRuntime[uuidToString(p.RuntimeID)] = presetOverride{
+			ID:            uuidToString(p.ID),
+			Name:          p.Name,
+			Env:           p.Env,
+			Model:         p.Model,
+			ThinkingLevel: p.ThinkingLevel,
+		}
+	}
+	for i := range resps {
+		if i >= len(agentRows) {
+			break
+		}
+		a := agentRows[i]
+		if !a.RuntimeID.Valid {
+			continue
+		}
+		runtimeID := uuidToString(a.RuntimeID)
+		preset, ok := byRuntime[runtimeID]
+		if !ok {
+			continue
+		}
+		resps[i].RuntimePresetOverride = runtimePresetOverrideFor(a, runtimeID, preset)
+	}
 }
