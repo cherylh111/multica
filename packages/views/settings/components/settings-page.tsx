@@ -18,6 +18,7 @@ import {
   Blocks,
   CreditCard,
   Server,
+  ServerCog,
 } from "lucide-react";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useFeatureEnabled } from "@multica/core/config";
@@ -43,6 +44,7 @@ import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { PluginsTab } from "./plugins-tab";
 import { McpTab } from "./mcp-tab";
+import { ProviderPresetsTab } from "./provider-presets-tab";
 import { BillingTab } from "./billing-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
@@ -202,6 +204,12 @@ export function SettingsPage({ extraDeviceTabs = [] }: SettingsPageProps = {}) {
           t(($) => $.page.tabs.mcp),
           Server,
           <McpTab />,
+        ),
+        entry(
+          "provider-presets",
+          t(($) => $.page.tabs.provider_presets),
+          ServerCog,
+          <ProviderPresetsTab />,
         ),
         ...(pluginsEnabled
           ? [

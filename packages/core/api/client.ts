@@ -42,6 +42,9 @@ import type {
   RuntimeProfile,
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
+  ProviderPreset,
+  CreateProviderPresetRequest,
+  UpdateProviderPresetRequest,
   InboxItem,
   InboxWorkspaceUnread,
   IssueSubscriber,
@@ -242,6 +245,8 @@ import { parseWithFallback } from "./schema";
 import {
   RuntimeProfileSchema,
   RuntimeProfileListSchema,
+  ProviderPresetSchema,
+  ProviderPresetListSchema,
   AgentTaskListSchema,
   AgentActivityBucketListSchema,
   AttachmentResponseSchema,
@@ -2169,6 +2174,13 @@ export class ApiClient {
       custom_name?: string;
       /** Apply custom_name to every runtime on the same machine. */
       apply_to_machine?: boolean;
+      /**
+       * The provider preset to put in force for this runtime, or `null` to
+       * clear it so every agent runs on its own configuration again. Omitting
+       * the field leaves the current preset alone — only its presence
+       * distinguishes "clear" from "unchanged".
+       */
+      active_provider_preset_id?: string | null;
     },
   ): Promise<AgentRuntime> {
     return this.fetch(`/api/runtimes/${runtimeId}`, {
@@ -2245,6 +2257,70 @@ export class ApiClient {
   ): Promise<void> {
     await this.fetch(
       `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Provider presets. Workspace-scoped, like the runtime profiles above.
+  //
+  // Reads come back MASKED: every env value and every secret-looking leaf of
+  // native_config is `***`. Echoing that sentinel back on an update is what
+  // preserves the stored secret, so the client must never treat it as the
+  // value to display or to edit from.
+  // -------------------------------------------------------------------------
+
+  async listProviderPresets(
+    workspaceId: string,
+    runtimeType?: string,
+  ): Promise<ProviderPreset[]> {
+    const query = runtimeType
+      ? `?runtime_type=${encodeURIComponent(runtimeType)}`
+      : "";
+    const res = await this.fetch<{ provider_presets?: ProviderPreset[] }>(
+      `/api/workspaces/${workspaceId}/provider-presets${query}`,
+    );
+    return parseWithFallback(
+      res.provider_presets ?? [],
+      ProviderPresetListSchema,
+      [] as ProviderPreset[],
+      { endpoint: "listProviderPresets" },
+    );
+  }
+
+  async createProviderPreset(
+    workspaceId: string,
+    body: CreateProviderPresetRequest,
+  ): Promise<ProviderPreset> {
+    const result = await this.fetch<ProviderPreset>(
+      `/api/workspaces/${workspaceId}/provider-presets`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return parseWithFallback(result, ProviderPresetSchema, result, {
+      endpoint: "createProviderPreset",
+    });
+  }
+
+  async updateProviderPreset(
+    workspaceId: string,
+    presetId: string,
+    patch: UpdateProviderPresetRequest,
+  ): Promise<ProviderPreset> {
+    const result = await this.fetch<ProviderPreset>(
+      `/api/workspaces/${workspaceId}/provider-presets/${encodeURIComponent(presetId)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    );
+    return parseWithFallback(result, ProviderPresetSchema, result, {
+      endpoint: "updateProviderPreset",
+    });
+  }
+
+  async deleteProviderPreset(
+    workspaceId: string,
+    presetId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/provider-presets/${encodeURIComponent(presetId)}`,
       { method: "DELETE" },
     );
   }

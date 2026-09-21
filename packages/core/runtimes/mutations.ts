@@ -58,8 +58,32 @@ export function useUpdateRuntime(wsId: string) {
         // Empty string clears the custom name; omit to leave unchanged.
         custom_name?: string;
         apply_to_machine?: boolean;
+        // The provider preset to put in force, or `null` to clear it.
+        active_provider_preset_id?: string | null;
       };
     }) => api.updateRuntime(runtimeId, patch),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
+    },
+  });
+}
+
+/**
+ * Points a runtime at a provider preset, or clears it with `null` — the
+ * "sync to connected runtimes" action. One call moves every agent on that
+ * runtime to another supplier, effective on their next task; nothing needs
+ * restarting.
+ */
+export function useApplyProviderPresetToRuntime(wsId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      runtimeId,
+      presetId,
+    }: {
+      runtimeId: string;
+      presetId: string | null;
+    }) => api.updateRuntime(runtimeId, { active_provider_preset_id: presetId }),
     onSettled: () => {
       qc.invalidateQueries({ queryKey: runtimeKeys.all(wsId) });
     },
