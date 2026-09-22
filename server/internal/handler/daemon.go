@@ -2332,6 +2332,48 @@ func claimResponseAgentIdentityMatches(resp AgentTaskResponse) bool {
 	return resp.AgentID != "" && resp.Agent != nil && resp.Agent.ID == resp.AgentID
 }
 
+// loadRuntimeProviderPreset resolves the provider preset in force for a runtime
+// into the claim payload's override fields. All four are empty when no preset is
+// applied, which the daemon treats as "run on the agent's own configuration" —
+// so an unresolvable preset degrades to today's behaviour instead of failing a
+// claim.
+//
+// That tolerance is deliberate and is the whole reason a broken preset cannot
+// take a machine offline: a deleted or disabled preset must never block the
+// agents depending on it. ErrNoRows is therefore not an error, and a real read
+// failure is logged and swallowed for the same reason.
+func (h *Handler) loadRuntimeProviderPreset(ctx context.Context, runtime db.AgentRuntime) (env map[string]string, model, thinkingLevel string, nativeConfig json.RawMessage) {
+	if !runtime.ActiveProviderPresetID.Valid {
+		return nil, "", "", nil
+	}
+	preset, err := h.Queries.GetActiveProviderPresetForRuntime(ctx, runtime.ID)
+	if err != nil {
+		// ErrNoRows covers both "no preset" and "preset deleted/disabled":
+		// the query joins on enabled = true, so a disabled preset simply does
+		// not resolve.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("daemon claim: load provider preset failed; running without preset",
+				"runtime_id", uuidToString(runtime.ID),
+				"preset_id", uuidToString(runtime.ActiveProviderPresetID),
+				"error", err)
+		}
+		return nil, "", "", nil
+	}
+	if len(preset.Env) > 0 {
+		if err := json.Unmarshal(preset.Env, &env); err != nil {
+			slog.Warn("daemon claim: unmarshal provider preset env failed; ignoring preset env",
+				"runtime_id", uuidToString(runtime.ID),
+				"preset_id", uuidToString(preset.ID),
+				"error", err)
+			env = nil
+		}
+	}
+	if nc := bytes.TrimSpace(preset.NativeConfig); len(nc) > 0 && !bytes.Equal(nc, []byte("{}")) && !bytes.Equal(nc, []byte("null")) {
+		nativeConfig = json.RawMessage(nc)
+	}
+	return env, preset.Model, preset.ThinkingLevel, nativeConfig
+}
+
 // buildClaimedTaskResponse assembles the full daemon claim payload for a
 // single already-claimed task and computes the exact comment ids embedded in
 // it (deliveredCommentIDs). Shared by the per-runtime handler
@@ -2517,6 +2559,13 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
 		runtimeConfig = json.RawMessage(agent.RuntimeConfig)
 	}
+	// The runtime's active provider preset, read on every claim (not cached at
+	// dispatch) so editing or disabling one lands on the next task with nothing
+	// to restart. It is NOT folded into CustomEnv / Model here: the daemon
+	// applies it as an override, which is what makes "preset wins over agent"
+	// true even for a client that already merges, and what lets the daemon name
+	// the preset in its launch log.
+	presetEnv, presetModel, presetThinkingLevel, presetNativeConfig := h.loadRuntimeProviderPreset(r.Context(), runtime)
 	resp.Agent = &TaskAgentData{
 		ID:                    uuidToString(agent.ID),
 		Name:                  agent.Name,
@@ -2529,6 +2578,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		ServiceTier:           agent.ServiceTier.String,
 		RuntimeConfig:         runtimeConfig,
 		DisabledRuntimeSkills: disabledRuntimeSkillsFor(agent.DisabledRuntimeSkills, runtimeID, runtime.Provider),
+
+		ProviderPresetEnv:           presetEnv,
+		ProviderPresetModel:         presetModel,
+		ProviderPresetThinkingLevel: presetThinkingLevel,
+		ProviderPresetNativeConfig:  presetNativeConfig,
 	}
 	// System agents carry a product-owned instruction layer that ships with
 	// this binary instead of being copied into their row at creation. That

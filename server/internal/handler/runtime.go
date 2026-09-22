@@ -44,10 +44,15 @@ type AgentRuntimeResponse struct {
 	Visibility string `json:"visibility"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
-	ProfileID  *string `json:"profile_id"`
-	LastSeenAt *string `json:"last_seen_at"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	ProfileID *string `json:"profile_id"`
+	// ActiveProviderPresetID is the provider preset currently in force for
+	// this runtime (null = every agent runs on its own configuration). Its
+	// env / model / thinking_level override each agent's own values at task
+	// launch. Clients resolve the name from the workspace preset list.
+	ActiveProviderPresetID *string `json:"active_provider_preset_id"`
+	LastSeenAt             *string `json:"last_seen_at"`
+	CreatedAt              string  `json:"created_at"`
+	UpdatedAt              string  `json:"updated_at"`
 }
 
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
@@ -60,23 +65,24 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	}
 
 	return AgentRuntimeResponse{
-		ID:           uuidToString(rt.ID),
-		WorkspaceID:  uuidToString(rt.WorkspaceID),
-		DaemonID:     textToPtr(rt.DaemonID),
-		Name:         rt.Name,
-		CustomName:   textToPtr(rt.CustomName),
-		RuntimeMode:  rt.RuntimeMode,
-		Provider:     rt.Provider,
-		LaunchHeader: agent.LaunchHeader(rt.Provider),
-		Status:       rt.Status,
-		DeviceInfo:   rt.DeviceInfo,
-		Metadata:     metadata,
-		OwnerID:      uuidToPtr(rt.OwnerID),
-		Visibility:   rt.Visibility,
-		ProfileID:    uuidToPtr(rt.ProfileID),
-		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
-		CreatedAt:    timestampToString(rt.CreatedAt),
-		UpdatedAt:    timestampToString(rt.UpdatedAt),
+		ID:                     uuidToString(rt.ID),
+		WorkspaceID:            uuidToString(rt.WorkspaceID),
+		DaemonID:               textToPtr(rt.DaemonID),
+		Name:                   rt.Name,
+		CustomName:             textToPtr(rt.CustomName),
+		RuntimeMode:            rt.RuntimeMode,
+		Provider:               rt.Provider,
+		LaunchHeader:           agent.LaunchHeader(rt.Provider),
+		Status:                 rt.Status,
+		DeviceInfo:             rt.DeviceInfo,
+		Metadata:               metadata,
+		OwnerID:                uuidToPtr(rt.OwnerID),
+		Visibility:             rt.Visibility,
+		ProfileID:              uuidToPtr(rt.ProfileID),
+		ActiveProviderPresetID: uuidToPtr(rt.ActiveProviderPresetID),
+		LastSeenAt:             timestampToPtr(rt.LastSeenAt),
+		CreatedAt:              timestampToString(rt.CreatedAt),
+		UpdatedAt:              timestampToString(rt.UpdatedAt),
 	}
 }
 
@@ -474,6 +480,12 @@ type UpdateAgentRuntimeRequest struct {
 	// runtime per provider) instead of just this one. Ignored when the
 	// runtime has no daemon_id.
 	ApplyToMachine bool `json:"apply_to_machine,omitempty"`
+	// ActiveProviderPresetID applies (or, when null / "", clears) the
+	// provider preset in force for this runtime — the "sync to this runtime"
+	// action. Every agent on the runtime then inherits the preset's env /
+	// model / thinking_level at launch. Owner / workspace admin only,
+	// matching the rest of this request.
+	ActiveProviderPresetID *string `json:"active_provider_preset_id,omitempty"`
 }
 
 // maxRuntimeCustomNameLen caps a runtime's custom name. Default names are
@@ -519,7 +531,44 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	var (
 		newVisibility  string
 		needVisibility bool
+		// presetID is the preset to apply; applyPreset distinguishes "apply
+		// NULL" (clear) from "field absent" (leave alone), which a bare
+		// pgtype.UUID cannot express.
+		presetID    pgtype.UUID
+		applyPreset bool
 	)
+	if req.ActiveProviderPresetID != nil {
+		raw := strings.TrimSpace(*req.ActiveProviderPresetID)
+		if raw != "" {
+			parsed, ok := parseUUIDOrBadRequest(w, raw, "active_provider_preset_id")
+			if !ok {
+				return
+			}
+			// The preset must be in this runtime's workspace and must target
+			// the same backend: a preset's env keys, native_config shape and
+			// model namespace are family-specific, so applying a Claude preset
+			// to a Codex runtime would point the wrong CLI at the wrong keys.
+			preset, err := h.Queries.GetProviderPresetForWorkspace(r.Context(), db.GetProviderPresetForWorkspaceParams{
+				ID:          parsed,
+				WorkspaceID: rt.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "provider preset not found in this workspace")
+				return
+			}
+			if !preset.Enabled {
+				writeError(w, http.StatusBadRequest, "provider preset is disabled")
+				return
+			}
+			if !presetAppliesToRuntime(preset.RuntimeType, rt.Provider) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf(
+					"provider preset %q targets %s and cannot be applied to a %s runtime", preset.Name, preset.RuntimeType, rt.Provider))
+				return
+			}
+			presetID = parsed
+		}
+		applyPreset = true
+	}
 	if req.Visibility != nil {
 		v := *req.Visibility
 		if v != "private" && v != "public" {
@@ -611,6 +660,20 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			rt = updated
 			changed = true
 		}
+	}
+
+	if applyPreset {
+		updated, err := h.Queries.SetRuntimeProviderPreset(r.Context(), db.SetRuntimeProviderPresetParams{
+			ID:       runtimeUUID,
+			PresetID: presetID,
+		})
+		if err != nil {
+			slog.Error("SetRuntimeProviderPreset failed", "error", err, "runtime_id", runtimeID)
+			writeError(w, http.StatusInternalServerError, "failed to update runtime")
+			return
+		}
+		rt = updated
+		changed = true
 	}
 
 	if changed {

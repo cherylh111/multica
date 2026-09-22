@@ -986,6 +986,93 @@ multica update               # Update to latest version
 multica agent list           # List agents in the current workspace
 ```
 
+## Provider Presets
+
+A provider preset is a workspace-level bundle of "which supplier this runtime
+talks to": base URL, API key, model, thinking level and an optional
+family-native config fragment. Applying one to a runtime makes **every agent on
+that runtime** inherit it, so one switch moves a whole machine between the
+official endpoint and a relay.
+
+Presets are stored server-side and delivered to the daemon with the task claim.
+That is deliberate: Multica gives every task its own workdir and environment, so
+writing the user's global CLI configuration (`~/.claude/settings.json` and
+friends) would let concurrent tasks overwrite each other and would silently
+reconfigure the machine for the user's own manual runs. Presets never touch it.
+
+**Precedence:** agent configuration → preset override. A preset's env, model and
+thinking level win over the agent's own `custom_env`, `model` and
+`thinking_level`. Empty preset fields mean "inherit", which is what families
+without a reasoning control (hermes) need.
+
+### List / Inspect
+
+```bash
+multica provider-preset list
+multica provider-preset list --runtime-type claude   # only what a claude runtime can use
+multica provider-preset list --output json
+```
+
+Env values come back masked as `***`. The table shows the key **count**, not the
+values — a value column would be three asterisks repeated, and printing the keys
+still advertises which credentials the workspace holds.
+
+### Create
+
+```bash
+multica provider-preset create \
+  --name "Official" \
+  --runtime-type claude \
+  --env '{"ANTHROPIC_BASE_URL":"https://api.anthropic.com","ANTHROPIC_API_KEY":"sk-..."}' \
+  --model claude-sonnet-4-5
+
+# Keep the key out of shell history and `ps`:
+multica provider-preset create --name "Relay" --runtime-type claude \
+  --custom-env-file ./relay-env.json
+cat ./relay-env.json | multica provider-preset create --name "Relay" \
+  --runtime-type claude --custom-env-stdin
+```
+
+The three `--custom-env*` channels are the same mutually exclusive set
+`multica agent` uses, chosen deliberately so a real API key can stay out of
+shell history and `ps`.
+
+`--runtime-type` is immutable after creation: a preset's env keys,
+`native_config` shape and model namespace are all family-specific, so repointing
+one would feed one supplier's config to a different CLI.
+
+### Update
+
+```bash
+multica provider-preset update <preset-id> --model claude-opus-4-6
+multica provider-preset update <preset-id> --custom-env-file ./relay-env.json
+multica provider-preset update <preset-id> --enabled=false
+```
+
+Echoing `***` back under a key preserves the stored value, so a round-trip of
+`list --output json` into `update` never destroys a secret.
+
+### Apply to a runtime / clear it
+
+```bash
+multica provider-preset apply <preset-id> --runtime <runtime-id>
+multica provider-preset unapply --runtime <runtime-id>
+```
+
+`apply` refuses a preset whose `runtime_type` does not match the runtime's
+backend. Agents pick the change up on their **next task** — nothing to restart.
+`unapply` returns the runtime to "every agent uses its own configuration".
+
+### Delete
+
+```bash
+multica provider-preset delete <preset-id>
+```
+
+Deleting unbinds the preset from every runtime that was using it rather than
+refusing: a preset is a configuration choice, not data, so removal falls back to
+each agent's own configuration instead of bricking the runtime.
+
 ## Output Formats
 
 Most commands support `--output` with two formats:

@@ -3542,3 +3542,34 @@ export const RuntimeProfileSchema = z
     runtime_type: profile.runtime_type || profile.protocol_family,
   }));
 export const RuntimeProfileListSchema = z.array(RuntimeProfileSchema);
+
+// ---------------------------------------------------------------------------
+// Provider presets — runtime-level supplier configuration.
+//
+// Every field that carries a secret arrives masked, so the schema only has to
+// describe the SHAPE: env values are `***`, and native_config's secret-looking
+// leaves are too. Defaults are permissive on purpose — a preset the client
+// cannot fully parse must still render with a name and a target runtime so the
+// admin can fix or delete it.
+// ---------------------------------------------------------------------------
+export const ProviderPresetSchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string(),
+    name: z.string(),
+    runtime_type: z.string(),
+    protocol_family: z.string().catch(""),
+    env: z.record(z.string(), z.string()).catch({}),
+    env_key_count: z.number().catch(0),
+    native_config: z.record(z.string(), z.unknown()).catch({}),
+    model: z.string().catch(""),
+    thinking_level: z.string().catch(""),
+    visibility: z.string().catch("workspace"),
+    created_by: z.string().nullable().catch(null),
+    enabled: z.boolean().catch(true),
+    created_at: z.string().catch(""),
+    updated_at: z.string().catch(""),
+  })
+  .passthrough();
+
+export const ProviderPresetListSchema = z.array(ProviderPresetSchema);

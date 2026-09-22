@@ -162,7 +162,7 @@ func TestReasonixProjectConfigMergesLegacyOwnerConfig(t *testing.T) {
 
 	workDir := t.TempDir()
 	env := map[string]string{"REASONIX_HOME": "", "HOME": home, "XDG_CONFIG_HOME": ""}
-	if err := writeReasonixProjectConfig(workDir, env, &sidecarManifest{}, testLogger()); err != nil {
+	if err := writeReasonixProjectConfig(workDir, env, nil, &sidecarManifest{}, testLogger()); err != nil {
 		t.Fatalf("writeReasonixProjectConfig: %v", err)
 	}
 	assertTaskDenyList(t, filepath.Join(workDir, reasonixProjectConfigFile), []string{"bash", "ask"})

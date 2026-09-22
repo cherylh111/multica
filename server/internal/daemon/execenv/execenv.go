@@ -73,6 +73,16 @@ type PrepareParams struct {
 	// runtime_config selected gateway mode (issue #3260). Zero means "inherit
 	// whatever the user's global openclaw.json already configures".
 	OpenclawGateway OpenclawGatewayPin
+	// ProviderPresetNativeConfig is the runtime's active provider preset's
+	// family-native config fragment (provider_preset.native_config), already
+	// decoded. Only families that read a config FILE consume it — codex,
+	// reasonix, hermes and openclaw. Every other family is configured through
+	// env injection alone, which needs no file. Empty means no fragment.
+	//
+	// It travels as a plain map so it survives the JSON hop into the isolated
+	// preparation helper process, and so each family can merge it in the shape
+	// that family writes (TOML, YAML, JSON).
+	ProviderPresetNativeConfig map[string]any
 	// LocalWorkDir, when non-empty, redirects the agent's working directory
 	// to a user-supplied absolute path instead of the synthesised envRoot/
 	// workdir. The path is NOT copied or mounted — the agent operates on
@@ -638,6 +648,12 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, params.Task.DisabledRuntimeSkills, logger); err != nil {
 			return nil, fmt.Errorf("execenv: hydrate codex skills: %w", err)
 		}
+		// Preset fragment into the copy the task owns. Written before the
+		// daemon's managed shell_environment_policy (appended later) so the
+		// fragment's bare keys stay ahead of every table header.
+		if err := applyCodexProviderPreset(filepath.Join(codexHome, "config.toml"), params.ProviderPresetNativeConfig, logger); err != nil {
+			return nil, fmt.Errorf("execenv: apply codex provider preset: %w", err)
+		}
 		env.CodexHome = codexHome
 	}
 
@@ -663,7 +679,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// Emptying an agent's own skill list is NOT a way to opt out of the overlay.
 	if params.Provider == "hermes" && len(params.Task.AgentSkills) > 0 {
 		hermesHome := filepath.Join(envRoot, "hermes-home")
-		sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, logger)
+		sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, params.ProviderPresetNativeConfig, logger)
 		if err != nil {
 			return nil, fmt.Errorf("execenv: prepare hermes-home: %w", err)
 		}
@@ -685,7 +701,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// reasonix.toml. Degraded, not fatal: without it the task still runs under
 	// the backend's fail-closed question handling.
 	if params.Provider == "reasonix" {
-		if err := writeReasonixProjectConfig(workDir, params.ReasonixEnv, manifest, logger); err != nil {
+		if err := writeReasonixProjectConfig(workDir, params.ReasonixEnv, params.ProviderPresetNativeConfig, manifest, logger); err != nil {
 			logger.Warn("execenv: write reasonix project config failed", "error", err)
 		}
 	}
@@ -725,11 +741,12 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// OpenClaw without the agents / providers / API keys it expects.
 	if params.Provider == "openclaw" {
 		result, err := prepareOpenclawConfig(envRoot, workDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			CacheDir:    openclawProfileCacheDir(params.Profile, logger),
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-			Logger:      logger,
+			OpenclawBin:    params.OpenclawBin,
+			CacheDir:       openclawProfileCacheDir(params.Profile, logger),
+			McpConfig:      params.McpConfig,
+			Gateway:        params.OpenclawGateway,
+			ProviderPreset: params.ProviderPresetNativeConfig,
+			Logger:         logger,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("execenv: prepare openclaw config: %w", err)
@@ -774,6 +791,11 @@ type ReuseParams struct {
 	// OpenclawGateway is the per-task Gateway pin re-applied on reuse so the
 	// agent picks up any runtime_config changes saved since the prior run.
 	OpenclawGateway OpenclawGatewayPin
+	// ProviderPresetNativeConfig mirrors PrepareParams.ProviderPresetNativeConfig
+	// on reuse, for the same reason the Gateway pin is re-applied: the preset
+	// may have been switched since the prior run, and a resumed turn must run
+	// against the same supplier as a fresh one.
+	ProviderPresetNativeConfig map[string]any
 	// Profile is the daemon's profile name (empty = default), mirroring
 	// PrepareParams.Profile so a reused task keys its per-issue Codex session
 	// store into the same profile namespace (MUL-4424).
@@ -945,7 +967,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// prior run's reasonix.toml, so without this the next turn would run with
 	// the tool available again.
 	if params.Provider == "reasonix" {
-		if err := writeReasonixProjectConfig(params.WorkDir, params.ReasonixEnv, manifest, logger); err != nil {
+		if err := writeReasonixProjectConfig(params.WorkDir, params.ReasonixEnv, params.ProviderPresetNativeConfig, manifest, logger); err != nil {
 			logger.Warn("execenv: refresh reasonix project config failed", "error", err)
 		}
 	}
@@ -970,7 +992,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if params.Provider == "hermes" && env.RootDir != "" {
 		hermesHome := filepath.Join(env.RootDir, "hermes-home")
 		if len(params.Task.AgentSkills) > 0 {
-			sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, logger)
+			sessions, err := prepareHermesHome(hermesHome, params.HermesSourceHome, params.HermesSourceMustExist, params.Task.AgentSkills, params.HermesEnv, params.HermesMemoryStore, params.HermesSessionStore, params.ProviderPresetNativeConfig, logger)
 			if err != nil {
 				// Fail closed: a half-built overlay must not run. Returning nil
 				// makes the daemon fall back to a fresh Prepare, whose error
@@ -1022,11 +1044,12 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// without the registered agents.
 	if params.Provider == "openclaw" {
 		result, err := prepareOpenclawConfig(env.RootDir, params.WorkDir, OpenclawConfigPrep{
-			OpenclawBin: params.OpenclawBin,
-			CacheDir:    openclawProfileCacheDir(params.Profile, logger),
-			McpConfig:   params.McpConfig,
-			Gateway:     params.OpenclawGateway,
-			Logger:      logger,
+			OpenclawBin:    params.OpenclawBin,
+			CacheDir:       openclawProfileCacheDir(params.Profile, logger),
+			McpConfig:      params.McpConfig,
+			Gateway:        params.OpenclawGateway,
+			ProviderPreset: params.ProviderPresetNativeConfig,
+			Logger:         logger,
 		})
 		if err != nil {
 			logger.Warn("execenv: refresh openclaw config failed", "error", err)

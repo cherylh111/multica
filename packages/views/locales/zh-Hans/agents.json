@@ -960,5 +960,12 @@
   "actions": {
     "selected_other": "已选 {{count}} 项",
     "clear_selection": "清除选择"
+  },
+  "preset_override": {
+    "applied": "该 runtime 正在使用预设「{{name}}」。",
+    "env": "该 agent 的 {{count}} 项环境变量被 runtime 预设「{{name}}」覆盖，启动时以预设为准。",
+    "hint": "预设挂在 runtime 上，会影响它上面的所有 agent。agent 自己的配置仍然保留、不会被删除——清除预设后它们会重新生效。",
+    "model": "该 agent 的 model 被 runtime 预设「{{name}}」覆盖。",
+    "thinking_level": "该 agent 的 thinking level 被 runtime 预设「{{name}}」覆盖。"
   }
 }

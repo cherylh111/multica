@@ -129,17 +129,38 @@ func reasonixDenyList(raw any) ([]string, error) {
 }
 
 // reasonixProjectConfig renders the task's reasonix.toml from the owner's config
-// at userConfigPath (which need not exist).
-func reasonixProjectConfig(userConfigPath string) ([]byte, error) {
+// at userConfigPath (which need not exist), with the runtime's active provider
+// preset fragment merged on top.
+//
+// The `ask` deny is re-applied AFTER the merge, not before: a fragment that
+// declares [permissions] replaces the whole table, and without this the task
+// would run with `ask` available again — the exact failure the file exists to
+// prevent. Everything else in the fragment wins outright.
+func reasonixProjectConfig(userConfigPath string, presetFragment map[string]any) ([]byte, error) {
 	ownerPermissions, err := reasonixOwnerPermissions(userConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	permissions, err := withReasonixAskDenied(ownerPermissions)
+	cfg := map[string]any{"permissions": ownerPermissions}
+	mergeProviderPresetFragment(cfg, presetFragment)
+	// `ask` is denied exactly once, AFTER the merge. A fragment that declares
+	// [permissions] replaces the whole table, so denying it before the merge
+	// would produce a task whose table has `ask` available again — the exact
+	// failure this file exists to prevent. Everything else in the fragment
+	// wins outright.
+	permissions, ok := cfg["permissions"].(map[string]any)
+	if !ok {
+		// A fragment that turned [permissions] into something other than a
+		// table cannot be restated; keep the owner's rather than silently
+		// dropping their deny rules.
+		permissions = ownerPermissions
+	}
+	merged, err := withReasonixAskDenied(permissions)
 	if err != nil {
 		return nil, err
 	}
-	body, err := toml.Marshal(map[string]any{"permissions": permissions})
+	cfg["permissions"] = merged
+	body, err := toml.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("encode reasonix project config: %w", err)
 	}
@@ -160,12 +181,12 @@ func reasonixProjectConfig(userConfigPath string) ([]byte, error) {
 //
 // The same holds when the owner's config cannot be read or restated: the daemon
 // writes nothing rather than a table that silently drops their deny rules.
-func writeReasonixProjectConfig(workDir string, taskEnv map[string]string, manifest *sidecarManifest, logger *slog.Logger) error {
+func writeReasonixProjectConfig(workDir string, taskEnv map[string]string, presetFragment map[string]any, manifest *sidecarManifest, logger *slog.Logger) error {
 	if workDir == "" {
 		return nil
 	}
 	userConfig := reasonixEnv(taskEnv).userConfigLoadPath()
-	content, err := reasonixProjectConfig(userConfig)
+	content, err := reasonixProjectConfig(userConfig, presetFragment)
 	if err != nil {
 		if logger != nil {
 			logger.Warn("execenv: cannot restate the reasonix user permissions; leaving the task without a project config — the reasonix ask tool stays enabled for this task",

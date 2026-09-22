@@ -73,7 +73,7 @@ func TestPrepareHermesHomeSessionStorePersistsAcrossTasks(t *testing.T) {
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 
 	firstTask := filepath.Join(t.TempDir(), "hermes-home")
-	sessions, err := prepareHermesHome(firstTask, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err := prepareHermesHome(firstTask, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare first task: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestPrepareHermesHomeSessionStorePersistsAcrossTasks(t *testing.T) {
 	mustWrite(t, filepath.Join(firstTask, "state.db"), "transcript")
 
 	secondTask := filepath.Join(t.TempDir(), "hermes-home")
-	if _, err := prepareHermesHome(secondTask, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(secondTask, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("prepare second task: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(secondTask, "state.db"))
@@ -121,14 +121,14 @@ func TestPrepareHermesHomeSessionStoreIsolatesConversations(t *testing.T) {
 
 	homeA := filepath.Join(t.TempDir(), "hermes-home")
 	if _, err := prepareHermesHome(homeA, sharedHome, false, skills, nil, "",
-		filepath.Join(storeRoot, "agent-1", "default", "issue-a"), testLogger()); err != nil {
+		filepath.Join(storeRoot, "agent-1", "default", "issue-a"), nil, testLogger()); err != nil {
 		t.Fatalf("prepare conversation A: %v", err)
 	}
 	mustWrite(t, filepath.Join(homeA, "state.db"), "issue A transcript")
 
 	homeB := filepath.Join(t.TempDir(), "hermes-home")
 	if _, err := prepareHermesHome(homeB, sharedHome, false, skills, nil, "",
-		filepath.Join(storeRoot, "agent-1", "default", "issue-b"), testLogger()); err != nil {
+		filepath.Join(storeRoot, "agent-1", "default", "issue-b"), nil, testLogger()); err != nil {
 		t.Fatalf("prepare conversation B: %v", err)
 	}
 	if _, err := os.ReadFile(filepath.Join(homeB, "state.db")); !os.IsNotExist(err) {
@@ -145,7 +145,7 @@ func TestPrepareHermesHomeWithoutSessionStoreKeepsStateTaskLocal(t *testing.T) {
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 
-	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger())
+	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -174,13 +174,13 @@ func TestPrepareHermesHomeMigratesTaskLocalSessionDB(t *testing.T) {
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 
 	// A task-local database left by an older daemon.
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 		t.Fatalf("prepare pre-store task: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
 	mustWrite(t, filepath.Join(hermesHome, "state.db-wal"), "uncheckpointed tail")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("prepare with store: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(store, "state.db"))
@@ -212,12 +212,12 @@ func TestPrepareHermesHomeMigrationNeverOverwritesStore(t *testing.T) {
 
 	mustWrite(t, filepath.Join(store, "state.db"), "the real transcript")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 		t.Fatalf("prepare pre-store task: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "a stray task-local db")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("prepare with store: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(store, "state.db"))
@@ -240,11 +240,11 @@ func TestPrepareHermesHomeSessionMountIsIdempotent(t *testing.T) {
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("reuse prepare: %v", err)
 	}
 
@@ -341,7 +341,7 @@ func TestPrepareHermesHomeLinkFailureKeepsTaskLocalDB(t *testing.T) {
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 		t.Fatalf("prepare pre-store task: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
@@ -351,7 +351,7 @@ func TestPrepareHermesHomeLinkFailureKeepsTaskLocalDB(t *testing.T) {
 		return errors.New("symlink privilege not held")
 	})
 
-	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare with unlinkable store: %v", err)
 	}
@@ -381,7 +381,7 @@ func TestPrepareHermesHomeLinkFailureKeepsTaskLocalDB(t *testing.T) {
 	// And once the host can link again, the same overlay mounts and carries the
 	// database over — nothing was lost in between.
 	restore()
-	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare after link support returns: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestPrepareHermesHomeMigrationIsAtomic(t *testing.T) {
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 		t.Fatalf("prepare pre-store task: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
@@ -419,7 +419,7 @@ func TestPrepareHermesHomeMigrationIsAtomic(t *testing.T) {
 		return copyFile(src, dst)
 	})
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err == nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err == nil {
 		t.Fatal("prepare succeeded despite a failed migration, want an error")
 	}
 
@@ -434,7 +434,7 @@ func TestPrepareHermesHomeMigrationIsAtomic(t *testing.T) {
 	}
 
 	restore()
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("retry after a failed migration: %v", err)
 	}
 	for name, want := range map[string]string{
@@ -464,12 +464,12 @@ func TestPrepareHermesHomeMountedEmptyStoreReportsNoHistory(t *testing.T) {
 	skills := []SkillContextForEnv{{Name: "deploy", Content: "# Deploy"}}
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 
-	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err != nil {
+	if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err != nil {
 		t.Fatalf("prepare first turn: %v", err)
 	}
 	mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
 
-	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare second turn: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestPrepareHermesHomeMountedEmptyStoreReportsNoHistory(t *testing.T) {
 	if err := os.RemoveAll(store); err != nil {
 		t.Fatalf("simulate gc reclaim: %v", err)
 	}
-	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare after gc reclaim: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestPrepareHermesHomeMountedEmptyStoreReportsNoHistory(t *testing.T) {
 	// an open that never wrote a page, and resuming against it is the same
 	// amnesia as resuming against an absent one.
 	mustWrite(t, filepath.Join(store, "state.db"), "")
-	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+	sessions, err = prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 	if err != nil {
 		t.Fatalf("prepare with an empty db: %v", err)
 	}
@@ -564,13 +564,13 @@ func TestPrepareHermesHomeMigrationIntoSemanticallyEmptyStore(t *testing.T) {
 				mustWrite(t, filepath.Join(store, name), content)
 			}
 
-			if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+			if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 				t.Fatalf("prepare pre-store task: %v", err)
 			}
 			mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
 			mustWrite(t, filepath.Join(hermesHome, "state.db-wal"), "uncheckpointed tail")
 
-			sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+			sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 			if err != nil {
 				if !tt.wantFailClosed {
 					t.Fatalf("prepare: %v", err)
@@ -725,12 +725,12 @@ func TestPrepareHermesHomeStoreCleanupHandlesUnexpectedEntryTypes(t *testing.T) 
 		mustWrite(t, filepath.Join(store, "state.db"), "")
 		mustWrite(t, filepath.Join(store, "state.db-wal", "nested.txt"), "content this code cannot identify")
 
-		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 			t.Fatalf("prepare pre-store task: %v", err)
 		}
 		mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
 
-		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger()); err == nil {
+		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger()); err == nil {
 			t.Fatal("prepare succeeded over a store entry it cannot identify, want fail closed")
 		}
 		if got, err := os.ReadFile(filepath.Join(store, "state.db-wal", "nested.txt")); err != nil || string(got) != "content this code cannot identify" {
@@ -754,12 +754,12 @@ func TestPrepareHermesHomeStoreCleanupHandlesUnexpectedEntryTypes(t *testing.T) 
 			t.Fatalf("plant symlink remnant: %v", err)
 		}
 
-		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", testLogger()); err != nil {
+		if _, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", "", nil, testLogger()); err != nil {
 			t.Fatalf("prepare pre-store task: %v", err)
 		}
 		mustWrite(t, filepath.Join(hermesHome, "state.db"), "transcript")
 
-		sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, testLogger())
+		sessions, err := prepareHermesHome(hermesHome, sharedHome, false, skills, nil, "", store, nil, testLogger())
 		if err != nil {
 			t.Fatalf("prepare: %v", err)
 		}

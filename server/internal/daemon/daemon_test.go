@@ -244,6 +244,58 @@ func TestLayerCustomEnvKeepsReasonixCredentialsHomeButBlocksStateHome(t *testing
 	}
 }
 
+// TestLayerProviderPresetEnvOverridesAgentEnv pins the preset's side of the
+// decision "agent configuration → preset override": a key the agent also sets
+// must resolve to the preset's value, or switching a runtime's preset would
+// silently not switch anything.
+func TestLayerProviderPresetEnvOverridesAgentEnv(t *testing.T) {
+	t.Parallel()
+	agentEnv := map[string]string{
+		"ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+		"ANTHROPIC_API_KEY":  "sk-agent-own",
+		"KEEP_ME":            "yes",
+	}
+	// What the agent's own custom_env already applied.
+	layerCustomEnvAndHermesHome(agentEnv, map[string]string{
+		"ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+		"ANTHROPIC_API_KEY":  "sk-agent-own",
+	}, "", nil)
+
+	layerProviderPresetEnv(agentEnv, &AgentData{
+		ProviderPresetEnv: map[string]string{
+			"ANTHROPIC_BASE_URL": "https://relay.example.com",
+			"ANTHROPIC_API_KEY":  "sk-relay",
+			// Must be dropped: a preset is user-authored config and cannot
+			// repoint the daemon's own managed paths.
+			"CODEX_HOME": "/evil/codex",
+		},
+	}, nil)
+
+	if got := agentEnv["ANTHROPIC_BASE_URL"]; got != "https://relay.example.com" {
+		t.Fatalf("ANTHROPIC_BASE_URL = %q, want the preset's relay", got)
+	}
+	if got := agentEnv["ANTHROPIC_API_KEY"]; got != "sk-relay" {
+		t.Fatalf("ANTHROPIC_API_KEY = %q, want the preset's key", got)
+	}
+	if got := agentEnv["KEEP_ME"]; got != "yes" {
+		t.Fatalf("unrelated key clobbered: %q", got)
+	}
+	if _, ok := agentEnv["CODEX_HOME"]; ok {
+		t.Fatal("preset must not override the blocklisted CODEX_HOME")
+	}
+}
+
+func TestLayerProviderPresetEnvNoAgentPayload(t *testing.T) {
+	t.Parallel()
+	agentEnv := map[string]string{"A": "b"}
+	// A nil agent payload builds an environment without one; that must stay a
+	// no-op rather than panic.
+	layerProviderPresetEnv(agentEnv, nil, nil)
+	if agentEnv["A"] != "b" {
+		t.Fatalf("env mutated without an agent payload: %v", agentEnv)
+	}
+}
+
 func TestValidateReasonixStateSegmentRejectsTraversal(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"", "../agent", "runtime/agent", "agent id"} {

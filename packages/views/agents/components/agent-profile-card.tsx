@@ -18,6 +18,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { AppLink } from "../../navigation";
 import { HealthIcon } from "../../runtimes/components/shared";
 import { availabilityConfig } from "../presence";
+import { AgentPresetOverrideNotice } from "./agent-preset-override-notice";
 import { VisibilityBadge } from "./visibility-badge";
 import { useT } from "../../i18n";
 
@@ -123,6 +124,10 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
       <div className="flex flex-col gap-1.5 text-caption">
         <RuntimeRow agent={agent} runtime={runtime} />
         <ModelRow model={agent.model} thinkingLevel={agent.thinking_level} />
+        <AgentPresetOverrideNotice
+          override={agent.runtime_preset_override}
+          scope="model"
+        />
         {agent.skills.length > 0 && (
           <SkillsRow skills={agent.skills.map((s) => s.name)} />
         )}

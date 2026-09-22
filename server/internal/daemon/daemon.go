@@ -8084,6 +8084,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
+			// Decoded once here; execenv hands it to whichever family writes
+			// a config file. Reuse needs it as much as a fresh prepare does —
+			// a resumed turn must keep running against the same supplier.
+			ProviderPresetNativeConfig: decodeProviderPresetNativeConfig(task.Agent, d.logger),
 		})
 		if err != nil {
 			return TaskResult{}, asEnvironmentSetupFailure(fmt.Errorf("reuse execution environment: %w", err))
@@ -8134,6 +8138,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			ReasonixEnv:           reasonixEnv,
 			CodexCustomArgs:       codexSandboxArgs,
 			Task:                  taskCtx,
+			// Decoded once here; execenv hands it to whichever family writes
+			// a config file. A fragment that will not decode drops the native
+			// half with a warning — the same degrade-don't-fail rule the env
+			// half follows, so a malformed fragment can never take a runtime
+			// offline.
+			ProviderPresetNativeConfig: decodeProviderPresetNativeConfig(task.Agent, d.logger),
 		}
 		if localAssignment.UsesWorktree() {
 			prepParams.LocalWorktree = &execenv.LocalWorktreeParams{LocalPath: localAssignment.AbsPath}
@@ -8511,6 +8521,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentCustomEnv = task.Agent.CustomEnv
 	}
 	layerCustomEnvAndHermesHome(agentEnv, agentCustomEnv, env.HermesHome, d.logger)
+	// Provider preset second, so it WINS on collisions — that is the whole
+	// point of a preset: it is the runtime-level answer to "which supplier",
+	// and an agent that also sets ANTHROPIC_BASE_URL must lose to it or the
+	// switch would silently not switch. Same blocklist: a preset is
+	// user-authored config and must not be able to repoint the daemon's own
+	// managed paths (CODEX_HOME, OPENCLAW_CONFIG_PATH, …) out from under the
+	// task.
+	layerProviderPresetEnv(agentEnv, task.Agent, d.logger)
 	if provider == "reasonix" {
 		reasonixStateHome, err := prepareReasonixTaskStateHome(d.cfg.Profile, task.RuntimeID, task.AgentID)
 		if err != nil {
@@ -8583,6 +8601,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil && task.Agent.Model != "" {
 		model = task.Agent.Model
 	}
+	// Provider preset wins over the agent's own model: a preset is the
+	// runtime-level answer to "which supplier", and the model id is part of
+	// that answer — a relay serves a different model namespace than the
+	// official endpoint.
+	if task.Agent != nil && task.Agent.ProviderPresetModel != "" {
+		model = task.Agent.ProviderPresetModel
+	}
 	if model == "" {
 		model = entry.Model
 	}
@@ -8621,6 +8646,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil {
 		thinkingLevel = task.Agent.ThinkingLevel
 		serviceTier = task.Agent.ServiceTier
+		// Same override order as the model. Empty preset thinking_level means
+		// "inherit", which is what hermes needs — it has no reasoning control
+		// and rejects any value — so only a non-empty preset value applies.
+		if task.Agent.ProviderPresetThinkingLevel != "" {
+			thinkingLevel = task.Agent.ProviderPresetThinkingLevel
+		}
 	}
 	selection := resolveTaskModelSelection(ctx, provider, agent.NewCommand(entry.Path, profileFixedArgs),
 		taskModelSelection{Model: model, ThinkingLevel: thinkingLevel, ServiceTier: serviceTier}, taskLog)
@@ -10439,6 +10470,51 @@ func annotateCodexRetiredCompaction(errMsg, provider string) string {
 		return errMsg
 	}
 	return errMsg + codexRetiredCompactionHint
+}
+
+// layerProviderPresetEnv applies the runtime's active provider preset on top of
+// the child env. It runs AFTER the agent's own custom_env so the preset wins,
+// and is the only layer that may override a key the agent also set.
+//
+// task.Agent may be nil on paths that build an environment without an agent
+// payload; that is a no-op rather than an error, matching how agentCustomEnv is
+// read above.
+// decodeProviderPresetNativeConfig decodes the runtime's active provider preset's
+// family-native fragment for the execenv layer. It returns nil when no preset is
+// in force, when the preset carries only env, or when the payload will not
+// decode — the last case logged, not fatal: the native half of a preset is an
+// override, and a run that skips it still runs on the agent's own configuration
+// rather than not running at all.
+func decodeProviderPresetNativeConfig(taskAgent *AgentData, logger *slog.Logger) map[string]any {
+	if taskAgent == nil || len(taskAgent.ProviderPresetNativeConfig) == 0 {
+		return nil
+	}
+	var fragment map[string]any
+	if err := json.Unmarshal(taskAgent.ProviderPresetNativeConfig, &fragment); err != nil {
+		if logger != nil {
+			logger.Warn("provider preset: native_config is not a JSON object; applying the preset's env only", "error", err)
+		}
+		return nil
+	}
+	if len(fragment) == 0 {
+		return nil
+	}
+	return fragment
+}
+
+func layerProviderPresetEnv(agentEnv map[string]string, taskAgent *AgentData, logger *slog.Logger) {
+	if taskAgent == nil {
+		return
+	}
+	for k, v := range taskAgent.ProviderPresetEnv {
+		if isBlockedEnvKey(k) {
+			if logger != nil {
+				logger.Warn("provider preset env: blocked key skipped", "key", k)
+			}
+			continue
+		}
+		agentEnv[k] = v
+	}
 }
 
 func layerCustomEnvAndHermesHome(agentEnv, customEnv map[string]string, overlayHome string, logger *slog.Logger) {

@@ -20,6 +20,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
+import { AgentPresetOverrideNotice } from "../agent-preset-override-notice";
 import type { EnvParseError } from "./env-file";
 import {
   formatEnvFile,
@@ -325,6 +326,7 @@ export function EnvTab({
   if (revealed === null) {
     return (
       <div className="space-y-4">
+        <AgentPresetOverrideNotice override={agent.runtime_preset_override} />
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <p className="flex items-center gap-2 text-body font-medium">
@@ -364,6 +366,7 @@ export function EnvTab({
   // Editable state — only entered after a successful reveal.
   return (
     <div className="space-y-4">
+      <AgentPresetOverrideNotice override={agent.runtime_preset_override} />
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1 text-caption text-muted-foreground">
           <p>

@@ -1,9 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { Workspace } from "../types";
+import type {
+  CreateProviderPresetRequest,
+  UpdateProviderPresetRequest,
+  Workspace,
+} from "../types";
 import { api } from "../api";
 import { defaultStorage } from "../platform/storage";
 import { clearWorkspaceStorage } from "../platform/storage-cleanup";
 import { workspaceKeys } from "./queries";
+import { runtimeKeys } from "../runtimes/queries";
 import {
   markWorkspaceDeletePending,
   unmarkWorkspaceDeletePending,
@@ -131,6 +136,55 @@ export function useDeleteWorkspaceMcpServer(wsId: string) {
       queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Provider presets
+//
+// Every write invalidates BOTH the preset list and the runtime list: a
+// preset's identity lives in the former, but which runtime is using it lives
+// in the latter, and a UI that only refreshed one of them would show a stale
+// "current preset" on the runtime row.
+// ---------------------------------------------------------------------------
+
+function useProviderPresetMutation<TVariables>(
+  wsId: string,
+  mutationFn: (variables: TVariables) => Promise<unknown>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: workspaceKeys.providerPresets(wsId),
+        }),
+        // Deleting a preset unbinds it from every runtime that used it, so
+        // each runtime's "current preset" changes too.
+        queryClient.invalidateQueries({ queryKey: runtimeKeys.all(wsId) }),
+      ]),
+  });
+}
+
+export function useCreateProviderPreset(wsId: string) {
+  return useProviderPresetMutation(
+    wsId,
+    (body: CreateProviderPresetRequest) => api.createProviderPreset(wsId, body),
+  );
+}
+
+export function useUpdateProviderPreset(wsId: string) {
+  return useProviderPresetMutation(
+    wsId,
+    ({ presetId, ...patch }: { presetId: string } & UpdateProviderPresetRequest) =>
+      api.updateProviderPreset(wsId, presetId, patch),
+  );
+}
+
+export function useDeleteProviderPreset(wsId: string) {
+  return useProviderPresetMutation(wsId, (presetId: string) =>
+    api.deleteProviderPreset(wsId, presetId),
+  );
 }
 
 /**

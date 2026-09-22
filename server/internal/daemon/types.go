@@ -224,6 +224,18 @@ type AgentData struct {
 	// daemon decodes provider-specific fields (e.g. openclaw mode +
 	// gateway endpoint, see issue #3260); other backends ignore it.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+	// ProviderPreset* mirror the runtime's active provider preset
+	// (server/internal/handler TaskAgentData, same JSON names). They are
+	// applied as OVERRIDES on top of the agent's own values — preset env
+	// beats CustomEnv, preset model beats Model — which is what makes one
+	// switch move every agent on the runtime to another supplier.
+	// Secrets arrive here in the clear: this is the daemon-authenticated
+	// claim payload and the values are only ever injected into the agent
+	// child process, never logged or echoed back to a browser.
+	ProviderPresetEnv           map[string]string `json:"provider_preset_env,omitempty"`
+	ProviderPresetModel         string            `json:"provider_preset_model,omitempty"`
+	ProviderPresetThinkingLevel string            `json:"provider_preset_thinking_level,omitempty"`
+	ProviderPresetNativeConfig  json.RawMessage   `json:"provider_preset_native_config,omitempty"`
 }
 
 // DisabledRuntimeSkillData is the task-wire identity of one runtime-local

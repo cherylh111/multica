@@ -21,6 +21,8 @@ export const workspaceKeys = {
   skills: (wsId: string) => ["workspaces", wsId, "skills"] as const,
   assigneeFrequency: (wsId: string) => ["workspaces", wsId, "assignee-frequency"] as const,
   mcpServers: (wsId: string) => ["workspaces", wsId, "mcp-servers"] as const,
+  providerPresets: (wsId: string) =>
+    ["workspaces", wsId, "provider-presets"] as const,
 };
 
 export function workspaceListOptions() {
@@ -200,6 +202,25 @@ export function workspaceMcpServersOptions(wsId: string) {
   return queryOptions({
     queryKey: workspaceKeys.mcpServers(wsId),
     queryFn: () => api.listWorkspaceMcpServers(wsId),
+    enabled: wsId !== "",
+  });
+}
+
+/**
+ * The workspace's provider presets. Member-visible — the payload carries
+ * masked env values only, and a member needs to see which supplier a runtime
+ * they can use is pointed at.
+ *
+ * `runtimeType` narrows the list to the presets that can legally be applied to
+ * one runtime; it is part of the query key so the picker's filtered list and
+ * the settings page's full list never share a cache entry.
+ */
+export function workspaceProviderPresetsOptions(wsId: string, runtimeType?: string) {
+  return queryOptions({
+    queryKey: runtimeType
+      ? ([...workspaceKeys.providerPresets(wsId), runtimeType] as const)
+      : workspaceKeys.providerPresets(wsId),
+    queryFn: () => api.listProviderPresets(wsId, runtimeType),
     enabled: wsId !== "",
   });
 }

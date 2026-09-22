@@ -138,6 +138,38 @@ type AgentResponse struct {
 	UpdatedAt                        string                 `json:"updated_at"`
 	ArchivedAt                       *string                `json:"archived_at"`
 	ArchivedBy                       *string                `json:"archived_by"`
+	// RuntimePresetOverride is set when the agent's runtime has a provider
+	// preset in force that overrides part of this agent's own configuration.
+	// Populated on the detail / update responses only — filling it on the
+	// agent list would cost one preset lookup per row.
+	RuntimePresetOverride *RuntimePresetOverride `json:"runtime_preset_override,omitempty"`
+}
+
+// RuntimePresetOverride describes the runtime-level provider preset that is
+// currently overriding parts of an agent's own configuration.
+//
+// A preset applied to a runtime wins over each agent's custom_env / model /
+// thinking_level, which means an agent can be silently running on a supplier
+// it was never configured for. This is the disclosure that makes that visible
+// instead of silent.
+//
+// It deliberately names NO env keys. The overlap is computed against the
+// agent's own secret names, and this object is readable by anyone who can read
+// the agent — a count answers "is my configuration still in force" without
+// turning the agent list into a directory of which credentials a workspace
+// holds.
+type RuntimePresetOverride struct {
+	PresetID   string `json:"preset_id"`
+	PresetName string `json:"preset_name"`
+	RuntimeID  string `json:"runtime_id"`
+	// OverriddenEnvKeyCount is how many of the agent's own custom_env keys the
+	// preset also sets. Those values never reach the agent process.
+	OverriddenEnvKeyCount int `json:"overridden_env_key_count"`
+	// ModelOverridden / ThinkingLevelOverridden are true when the preset
+	// carries a non-empty value for that field: an empty preset field means
+	// "inherit", so it overrides nothing.
+	ModelOverridden         bool `json:"model_overridden"`
+	ThinkingLevelOverridden bool `json:"thinking_level_overridden"`
 }
 
 // runtimeConfigGatewayTokenMask is the placeholder the API substitutes for
@@ -774,6 +806,19 @@ type TaskAgentData struct {
 	// (issue #3260). Other providers ignore the payload entirely. Sent
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+	// ProviderPreset* carry the runtime's active provider preset (null preset
+	// = all four empty). They travel SEPARATELY from the agent's own fields
+	// rather than pre-merged, because the daemon applies them as overrides:
+	// preset env wins over CustomEnv and preset model wins over Model. Keeping
+	// them distinct is also what lets the daemon log which values came from a
+	// preset, so "why is my agent on the relay" is answerable from a task log.
+	// Secrets ride here in the clear — this is a daemon-authenticated payload
+	// the daemon injects into the child process, and it is never echoed into a
+	// task record, an issue comment, or a browser response.
+	ProviderPresetEnv           map[string]string `json:"provider_preset_env,omitempty"`
+	ProviderPresetModel         string            `json:"provider_preset_model,omitempty"`
+	ProviderPresetThinkingLevel string            `json:"provider_preset_thinking_level,omitempty"`
+	ProviderPresetNativeConfig  json.RawMessage   `json:"provider_preset_native_config,omitempty"`
 }
 
 // visibleTaskHistory omits unused assignee fallbacks created by older versions.
@@ -1174,6 +1219,10 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	visible := make([]AgentResponse, 0, len(agents))
+	// Parallel to `visible`: the disclosure is computed from DB rows, and the
+	// loop above can drop an agent the viewer may not see, so the two slices
+	// must stay index-aligned rather than reusing `agents`.
+	visibleRows := make([]db.Agent, 0, len(agents))
 	for _, a := range agents {
 		targets := targetsByAgent[uuidToString(a.ID)]
 		if actorType == "member" {
@@ -1215,7 +1264,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 			redactComposioToolkitAllowlist(&resp)
 		}
 		visible = append(visible, resp)
+		visibleRows = append(visibleRows, a)
 	}
+	// One batch read for the whole page — per-agent lookups here would add a
+	// query per row to the busiest read in the app.
+	h.attachRuntimePresetOverrides(r.Context(), visible, visibleRows)
 
 	writeJSON(w, http.StatusOK, visible)
 }
@@ -1286,6 +1339,10 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	} else if actorType == "agent" || uuidToString(agent.OwnerID) != userID {
 		redactComposioToolkitAllowlist(&resp)
 	}
+	// Last, so the disclosure reflects the same row the rest of the response
+	// was built from — the settings page shows it next to the exact fields it
+	// overrides.
+	h.attachRuntimePresetOverride(r.Context(), &resp, agent)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -2327,6 +2384,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	} else if uuidToString(updated.OwnerID) != userID {
 		redactComposioToolkitAllowlist(&resp)
 	}
+	// Recomputed after the write, not before: saving a new custom_env changes
+	// what the preset overrides, and the settings page re-renders straight
+	// from this response.
+	h.attachRuntimePresetOverride(r.Context(), &resp, updated)
 	writeJSON(w, http.StatusOK, resp)
 }
 

@@ -86,6 +86,15 @@ export interface RuntimeDevice {
    * a missing value as `null` (built-in).
    */
   profile_id?: string | null;
+  /**
+   * Provider preset currently in force for this runtime, or `null` when every
+   * agent runs on its own configuration. Its env / model / thinking_level
+   * override each agent's own values at task launch, so the UI must disclose
+   * the override where an agent sets the same key. The name is resolved from
+   * the workspace preset list; older backends omit the field, which reads as
+   * `null`.
+   */
+  active_provider_preset_id?: string | null;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
@@ -188,6 +197,82 @@ export interface UpdateRuntimeProfileRequest {
   fixed_args?: string[];
   visibility?: RuntimeProfileVisibility;
   enabled?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Provider presets
+//
+// A provider preset is a workspace-level bundle of "which supplier this
+// runtime talks to": base URL, API key, model, thinking level and an optional
+// family-native config fragment. Applying one to a runtime sets
+// `active_provider_preset_id`, and every agent on that runtime inherits it —
+// one switch moves a whole machine between the official endpoint and a relay.
+//
+// The preset is delivered server-side with the task claim, so it applies on
+// any machine the runtime is registered from, and it never writes the user's
+// global CLI configuration.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sentinel the API substitutes for every non-empty env value and for
+ * secret-looking leaves inside `native_config`. Echoing it back in a PATCH
+ * preserves the stored value instead of overwriting it with three asterisks.
+ */
+export const PROVIDER_PRESET_SECRET_MASK = "***";
+
+/** A preset's env: keys are always visible, values are always masked. */
+export type ProviderPresetEnv = Record<string, string>;
+
+export interface ProviderPreset {
+  id: string;
+  workspace_id: string;
+  name: string;
+  /** Which backend this preset configures. Immutable after creation. */
+  runtime_type: string;
+  protocol_family: string;
+  /** Masked: every non-empty value is PROVIDER_PRESET_SECRET_MASK. */
+  env: ProviderPresetEnv;
+  env_key_count: number;
+  /** Masked under secret-looking keys; otherwise the stored fragment. */
+  native_config: Record<string, unknown>;
+  /** Empty means "inherit" (agent model, then the daemon default). */
+  model: string;
+  /** Empty means "inherit". Some families (hermes) reject any value. */
+  thinking_level: string;
+  visibility: RuntimeProfileVisibility;
+  created_by: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProviderPresetRequest {
+  name: string;
+  runtime_type: string;
+  env?: ProviderPresetEnv;
+  model?: string;
+  thinking_level?: string;
+  native_config?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+/** PATCH body. `runtime_type` is immutable and rejected if sent. */
+export interface UpdateProviderPresetRequest {
+  name?: string;
+  env?: ProviderPresetEnv;
+  model?: string;
+  thinking_level?: string;
+  native_config?: Record<string, unknown>;
+  enabled?: boolean;
+}
+
+/**
+ * Body for applying a preset to a runtime (PATCH /api/runtimes/:id).
+ * Send `null` to clear — an omitted field leaves the current preset alone,
+ * so the two are not interchangeable.
+ */
+export interface ApplyProviderPresetRequest {
+  active_provider_preset_id: string | null;
 }
 
 // Coarse classifier set by the backend when a task transitions to "failed".
@@ -612,6 +697,37 @@ export interface Agent {
   updated_at: string;
   archived_at: string | null;
   archived_by: string | null;
+  /**
+   * Set when this agent's runtime has a provider preset in force that
+   * overrides part of the agent's own configuration. Omitted entirely when
+   * no preset applies — treat `undefined` as "nothing is overriding you".
+   *
+   * The agent's env / model are still stored and still editable; a preset
+   * does not rewrite them. But at launch the preset wins, so the settings
+   * page must say so rather than showing configuration that is not in
+   * force.
+   *
+   * Overridden env keys are COUNTED, never named: they are the agent's own
+   * secret names, and this object is readable by anyone who can read the
+   * agent.
+   */
+  runtime_preset_override?: AgentRuntimePresetOverride;
+}
+
+/**
+ * Which parts of an agent's own configuration a runtime-level provider
+ * preset is currently replacing.
+ */
+export interface AgentRuntimePresetOverride {
+  preset_id: string;
+  preset_name: string;
+  runtime_id: string;
+  /** How many of the agent's own custom_env keys the preset also sets. */
+  overridden_env_key_count: number;
+  /** True when the preset carries a model AND the agent set one. */
+  model_overridden: boolean;
+  /** True when the preset carries a thinking level AND the agent set one. */
+  thinking_level_overridden: boolean;
 }
 
 export interface AgentConversationStarter {

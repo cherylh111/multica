@@ -132,7 +132,7 @@ default = "some-model"
 `)
 	workDir := t.TempDir()
 
-	if err := writeReasonixProjectConfig(workDir, env, &sidecarManifest{}, testLogger()); err != nil {
+	if err := writeReasonixProjectConfig(workDir, env, nil, &sidecarManifest{}, testLogger()); err != nil {
 		t.Fatalf("writeReasonixProjectConfig: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(workDir, reasonixProjectConfigFile))
@@ -170,7 +170,7 @@ func TestReasonixProjectConfigKeepsOwnerAskDeny(t *testing.T) {
 	env := reasonixEnvWith(t, "[permissions]\ndeny = [\"ask\", \"bash\"]\n")
 	workDir := t.TempDir()
 
-	if err := writeReasonixProjectConfig(workDir, env, &sidecarManifest{}, testLogger()); err != nil {
+	if err := writeReasonixProjectConfig(workDir, env, nil, &sidecarManifest{}, testLogger()); err != nil {
 		t.Fatalf("writeReasonixProjectConfig: %v", err)
 	}
 	got := taskDenyList(t, filepath.Join(workDir, reasonixProjectConfigFile))
@@ -197,7 +197,7 @@ func TestReasonixProjectConfigSkipsUnreadableOwnerConfig(t *testing.T) {
 			t.Parallel()
 			workDir := t.TempDir()
 			manifest := &sidecarManifest{}
-			if err := writeReasonixProjectConfig(workDir, reasonixEnvWith(t, tc.config), manifest, testLogger()); err != nil {
+			if err := writeReasonixProjectConfig(workDir, reasonixEnvWith(t, tc.config), nil, manifest, testLogger()); err != nil {
 				t.Fatalf("writeReasonixProjectConfig: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(workDir, reasonixProjectConfigFile)); !os.IsNotExist(err) {
@@ -224,7 +224,7 @@ func TestReasonixProjectConfigKeepsRepositoryFile(t *testing.T) {
 	// reports success so the task still runs (with ask enabled, caught by the
 	// backend's fail-closed question handling).
 	manifest := &sidecarManifest{}
-	if err := writeReasonixProjectConfig(workDir, reasonixEnvWith(t, ""), manifest, testLogger()); err != nil {
+	if err := writeReasonixProjectConfig(workDir, reasonixEnvWith(t, ""), nil, manifest, testLogger()); err != nil {
 		t.Fatalf("writeReasonixProjectConfig: %v", err)
 	}
 	data, err := os.ReadFile(configPath)

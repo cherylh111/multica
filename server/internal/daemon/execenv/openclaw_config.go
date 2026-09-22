@@ -243,6 +243,12 @@ type OpenclawConfigPrep struct {
 	// — which is the right default when the user already has a working
 	// gateway set up locally. See issue #3260.
 	Gateway OpenclawGatewayPin
+	// ProviderPreset is the runtime's active provider preset's family-native
+	// fragment, merged into the wrapper LAST so it wins over the synthesized
+	// agents / mcp / gateway entries and, through OpenClaw's deep-merge
+	// $include semantics, over the user's global openclaw.json. Empty means
+	// no preset is in force.
+	ProviderPreset map[string]any
 	// Logger records the config-discovery outcome. Optional; nil disables
 	// logging. Discovery used to be entirely silent, which is why #6630 —
 	// a wrapper written without `$include` — could only be diagnosed by
@@ -453,6 +459,12 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 	}
 
 	cfg := buildPerTaskOpenclawConfig(activePath, exists, resetPath, resolvedList, agentsSource, workDir, managedMcp, hasManagedMcp, opts.Gateway)
+	// Merged here rather than inside the builder so the synthesized wrapper
+	// keeps one definition: the preset is a distinct input with distinct
+	// precedence, not another argument that decides which keys exist. Last
+	// write wins, so a preset can pin `gateway` or `agents.defaults` over
+	// whatever the daemon or the user's global config supplied.
+	mergeProviderPresetFragment(cfg, opts.ProviderPreset)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
